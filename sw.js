@@ -1,5 +1,5 @@
 // Troque o número da versão sempre que atualizar os arquivos do app.
-var CACHE = 'venda-externa-v1';
+var CACHE = 'venda-externa-v3';
 var ARQUIVOS = ['./', './index.html', './manifest.webmanifest', './zxing.min.js', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ARQUIVOS); }).then(function () { return self.skipWaiting(); }));
