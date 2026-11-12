@@ -2,29 +2,39 @@ VENDA EXTERNA — versão instalável (funciona sem internet)
 
 O que tem nesta pasta
   index.html            o aplicativo
-  sw.js                 guarda o app no celular para abrir sem internet
+  sw.js                 guarda o app e as fotos no celular para uso sem internet
   manifest.webmanifest  nome e ícone do app instalado
   zxing.min.js          leitor de código de barras (usado no iPhone)
+  xlsx.min.js           leitor de planilhas do Excel
   icon-192.png / icon-512.png
 
 Como colocar no ar (uma vez só)
   O app precisa ser publicado em um endereço https. Não funciona abrindo o
   index.html direto da pasta do celular: a câmera e o modo offline exigem https.
   Qualquer hospedagem de site estático serve (GitHub Pages, Netlify,
-  Cloudflare Pages ou o servidor da própria empresa). Envie os 6 arquivos
+  Cloudflare Pages ou o servidor da própria empresa). Envie os 7 arquivos
   juntos, na mesma pasta.
 
 Como instalar em cada celular (uma vez, com internet)
-  Android (Chrome): abra o endereço, menu ⋮, "Adicionar à tela inicial"
-                    ou "Instalar app".
-  iPhone (Safari):  abra o endereço, botão Compartilhar,
-                    "Adicionar à Tela de Início".
+  Android (Chrome): abra o endereço, toque nos três pontinhos no canto superior
+                    direito e em "Adicionar à tela inicial" ou "Instalar app".
+  iPhone (Safari):  abra o endereço, toque no botão Compartilhar (quadrado com
+                    seta para cima) e em "Adicionar à Tela de Início".
   Abra o app instalado uma vez ainda com internet e permita o uso da câmera.
-  Depois disso ele abre e funciona sem conexão.
+
+Antes de sair para a ação (com internet)
+  1. Aba Ação > Planilha de produtos > Importar planilha
+     Colunas, nesta ordem: SKU, foto, preço, nome (.xlsx ou .csv).
+     A foto é o link da imagem (https://...). Imagem colada dentro da célula
+     do Excel não é lida.
+  2. Aba Ação > Planilha de lojas > Importar planilha
+     Colunas, nesta ordem: BCPS, nome da loja, praça, gerente.
+  3. Toque em "Guardar fotos no aparelho" para as fotos aparecerem sem internet.
+  4. Em "Logo da marca", envie o arquivo oficial da logo.
 
 Importante
   - Os cupons ficam salvos só no aparelho onde foram lançados. Exporte o CSV
     ao final de cada ação.
   - Não limpe os dados do navegador nem desinstale o app antes de exportar.
   - Para atualizar o app: troque os arquivos na hospedagem e mude o número
-    da versão na segunda linha do sw.js (v1 para v2).
+    da versão na segunda linha do sw.js (v5 para v6).
