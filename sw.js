@@ -1,5 +1,5 @@
 // Troque o número da versão sempre que atualizar os arquivos do app.
-var CACHE = 'venda-externa-v5';
+var CACHE = 'venda-externa-v6';
 var FOTOS = 'venda-externa-fotos';
 var ARQUIVOS = ['./', './index.html', './manifest.webmanifest', './zxing.min.js', './xlsx.min.js', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function (e) {

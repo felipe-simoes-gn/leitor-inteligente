@@ -120,7 +120,7 @@ label{display:block;font-size:14px;color:var(--muted);margin:14px 0 5px}
 .rtotal b{font-size:24px;font-weight:700;letter-spacing:-.02em}
 .empty{color:var(--muted);padding:18px 0 4px;margin:0}
 .tag{display:inline-block;padding:1px 8px;border-radius:7px;background:var(--tint);color:var(--ok);font-size:12px;font-weight:650}
-.tag.aberto{color:var(--warn)}.tag.cancelado{color:var(--danger)}.tag.pag{color:var(--accent)}
+.tag.aberto{color:var(--warn)}.tag.cancelado{color:var(--danger)}.tag.pag{color:var(--accent)}.tag.dev{color:var(--muted)}
 
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px}
 .list{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
@@ -226,6 +226,7 @@ dt{color:var(--muted)}dd{margin:0;font-weight:600;overflow-wrap:anywhere}
 <div id="confete" aria-hidden="true"></div>
 <input type="file" id="fileProdutos" accept=".xlsx,.xls,.xlsm,.ods,.csv,.txt" hidden>
 <input type="file" id="fileLojas" accept=".xlsx,.xls,.xlsm,.ods,.csv,.txt" hidden>
+<input type="file" id="fileVendas" accept=".csv,.txt,.xlsx,.xls" hidden>
 <input type="file" id="fileLogo" accept="image/*" hidden>
 
 <script>
@@ -242,6 +243,7 @@ var T={produtos:{},lojas:{}},LOGO='',IDX=[];
   try{p=JSON.parse(localStorage.getItem(KEY)||'null');}catch(e){}
   try{t=JSON.parse(localStorage.getItem(KEY_T)||'null');}catch(e){}
   try{LOGO=localStorage.getItem(KEY_LOGO)||'';}catch(e){}
+  if(p&&p.dev&&p.dev.id)S.dev=p.dev;
   if(p&&p.acoes){S.acoes=p.acoes;S.acaoId=p.acaoId||null;S.cupomId=p.cupomId||null;if(p.cfg)for(var k in p.cfg)S.cfg[k]=p.cfg[k];}
   if(t&&t.produtos){T.produtos=t.produtos;T.lojas=t.lojas||{};}
   else if(p){ /* migra as tabelas da versão anterior */
@@ -250,7 +252,8 @@ var T={produtos:{},lojas:{}},LOGO='',IDX=[];
   }
 })();
 function gravar(k,v){try{localStorage.setItem(k,v);return true;}catch(e){toast('Sem espaço para salvar neste aparelho. Exporte os cupons agora.');return false;}}
-function save(){gravar(KEY,JSON.stringify({acoes:S.acoes,acaoId:S.acaoId,cupomId:S.cupomId,cfg:S.cfg}));}
+function persistir(){gravar(KEY,JSON.stringify({acoes:S.acoes,acaoId:S.acaoId,cupomId:S.cupomId,cfg:S.cfg,dev:S.dev}));}
+function save(){persistir();agendarSync();}
 function saveT(){gravar(KEY_T,JSON.stringify(T));reindex();}
 
 var $=function(s){return document.querySelector(s);};
@@ -281,6 +284,107 @@ function thumb(cod,big){
 }
 document.addEventListener('error',function(e){var t=e.target;if(t&&t.tagName==='IMG'&&t.classList.contains('th')){var s=document.createElement('span');s.className=t.className;s.innerHTML=ICO_TAG;t.replaceWith(s);}},true);
 
+/* ---------- sincronização entre aparelhos ---------- */
+var KEY_R='vendaExterna.remoto.v1',DB,SY={ro:false,ult:0,erro:false},REM={id:null,cupons:[]},REM_ACOES=[],subId=null,unsub=null,syncT=null,enviando=false;
+var TEM_NUVEM=!!(window.claude&&window.claude.use);
+if(!S.dev){(function(){var d=uid();S.dev={id:d,nome:'Aparelho '+d.slice(-3).toUpperCase()};})();}
+try{var _r=JSON.parse(localStorage.getItem(KEY_R)||'null');if(_r&&_r.id&&_r.cupons)REM=_r;}catch(e){}
+function hash(s){var h=5381;for(var i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return h;}
+function pA(a){return {nome:a.nome||'',empresa:a.empresa||'',bcps:a.bcps||'',loja:a.loja||'',praca:a.praca||'',gerente:a.gerente||'',data:a.data||'',meta:a.meta||null};}
+function pC(c){return {dev:S.dev.id,devNome:S.dev.nome,num:c.num,status:c.status,criadoEm:c.criadoEm,finalizadoEm:c.finalizadoEm||null,pagamento:c.pagamento||'',cpf:c.cpf||'',tel:c.tel||'',itens:c.itens.map(function(i){return {codigo:i.codigo,descricao:i.descricao||'',preco:i.preco,qtd:i.qtd,desconto:i.desconto||''};})};}
+function fila(){
+  var f=[];
+  S.acoes.forEach(function(a){
+    var d=pA(a),h=hash(JSON.stringify(d));
+    if(h!==a.sy)f.push({p:'acoes/'+a.id,d:d,ok:function(){a.sy=h;}});
+    a.cupons.forEach(function(c){var d2=pC(c),h2=hash(JSON.stringify(d2));if(h2!==c.sy)f.push({p:'acoes/'+a.id+'/cupons/'+S.dev.id+'_'+c.id,d:d2,ok:function(){c.sy=h2;}});});
+  });
+  return f;
+}
+function agendarSync(){if(!TEM_NUVEM)return;clearTimeout(syncT);syncT=setTimeout(sincronizar,900);}
+function sincronizar(){
+  if(!DB||enviando||SY.ro||navigator.onLine===false)return;
+  var f=fila();if(!f.length)return;
+  enviando=true;
+  (function prox(){
+    var j=f.shift();
+    if(!j){enviando=false;SY.ult=Date.now();SY.erro=false;persistir();pintaSync();if(fila().length)agendarSync();return;}
+    DB.doc(j.p).set(j.d).then(function(){j.ok();prox();},function(e){
+      enviando=false;
+      if(e&&e.code==='invalid_argument')SY.ro=true;else{SY.erro=true;setTimeout(sincronizar,15000);}
+      persistir();pintaSync();
+    });
+  })();
+}
+function remotos(a){
+  if(!a)return [];
+  var nuvem=REM.id===a.id?REM.cupons:[],vistos={},out=nuvem.slice();
+  nuvem.forEach(function(c){vistos[c.dev]=1;});
+  if(a.imp)Object.keys(a.imp).forEach(function(k){if(!vistos[k])out=out.concat(a.imp[k].cupons);});
+  return out;
+}
+function normRem(id,d){
+  d=d||{};
+  return {id:id,remoto:true,dev:String(d.dev||''),devNome:String(d.devNome||'Outro aparelho').slice(0,40),num:+d.num||0,
+    status:['aberto','finalizado','cancelado'].indexOf(d.status)>=0?d.status:'aberto',criadoEm:+d.criadoEm||0,finalizadoEm:+d.finalizadoEm||0,
+    pagamento:String(d.pagamento||''),cpf:String(d.cpf||''),tel:String(d.tel||''),
+    itens:(Array.isArray(d.itens)?d.itens:[]).map(function(i,n){i=i||{};return {id:id+'-'+n,codigo:String(i.codigo||''),descricao:String(i.descricao||''),preco:+i.preco||0,qtd:+i.qtd||0,desconto:String(i.desconto||'')};})};
+}
+function atualizaTela(){
+  var v=view(),foco=document.activeElement&&/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+  if(!foco&&$('#backdrop').hidden&&$('#cam').hidden&&(v!=='venda'||!acao()))render();else pintaSync();
+}
+function assinar(a){
+  if(!DB||!a||subId===a.id)return;
+  if(unsub)try{unsub();}catch(e){}
+  subId=a.id;if(REM.id!==a.id)REM={id:a.id,cupons:[]};
+  unsub=DB.collection('acoes/'+a.id+'/cupons').onSnapshot(function(snap){
+    if(subId!==a.id)return;
+    REM={id:a.id,cupons:snap.docs.map(function(d){return normRem(d.id,d.data());}).filter(function(c){return c.dev!==S.dev.id;})};
+    try{localStorage.setItem(KEY_R,JSON.stringify(REM));}catch(e){}
+    atualizaTela();
+  },function(){subId=null;});
+}
+function iniciarSync(){
+  if(!TEM_NUVEM){DB=null;return;}
+  window.claude.use('db').then(function(db){
+    DB=db||null;if(!DB){pintaSync();return;}
+    DB.collection('acoes').onSnapshot(function(snap){
+      REM_ACOES=snap.docs.map(function(d){var x=d.data()||{};return {id:d.id,nome:String(x.nome||'Ação'),empresa:String(x.empresa||''),bcps:String(x.bcps||''),loja:String(x.loja||''),praca:String(x.praca||''),gerente:String(x.gerente||''),data:String(x.data||''),meta:+x.meta>0?+x.meta:null};});
+      REM_ACOES.forEach(function(r){S.acoes.forEach(function(a){ /* dados da ação alterados em outro aparelho */
+        if(a.id!==r.id)return;var hl=hash(JSON.stringify(pA(a))),d=pA(r),hr=hash(JSON.stringify(d));
+        if(hl===a.sy&&hr!==hl){for(var k in d)a[k]=d[k];a.sy=hr;persistir();}
+      });});
+      atualizaTela();
+    },function(){});
+    assinar(acao());sincronizar();pintaSync();
+  },function(){DB=null;pintaSync();});
+}
+function textoSync(){
+  if(!TEM_NUVEM)return '';
+  if(DB===undefined)return 'Conectando aos outros aparelhos…';
+  if(DB===null)return 'Sincronização indisponível nesta abertura. As vendas seguem salvas neste aparelho.';
+  if(SY.ro)return 'Seu acesso é só de leitura: você vê as vendas dos outros aparelhos, mas as deste não são enviadas. Peça acesso de Colaborador a quem compartilhou o app.';
+  var n=fila().length;
+  if(navigator.onLine===false)return 'Sem internet. '+(n?n+' registro(s) aguardando envio.':'Tudo o que foi lançado aqui já foi enviado.');
+  if(n)return SY.erro?'Não foi possível enviar agora. '+n+' registro(s) aguardando nova tentativa.':'Enviando '+n+' registro(s)…';
+  return 'Vendas sincronizadas'+(SY.ult?' às '+hora(SY.ult):'')+'.';
+}
+function pintaSync(){var t=textoSync();document.querySelectorAll('.sync').forEach(function(el){el.textContent=t;el.hidden=!t;});}
+window.addEventListener('online',function(){sincronizar();pintaSync();});
+window.addEventListener('offline',pintaSync);
+function listaFora(){
+  var fora=REM_ACOES.filter(function(r){return !S.acoes.some(function(x){return x.id===r.id;});}).sort(function(x,y){return x.data<y.data?1:-1;}).slice(0,8);
+  if(!fora.length)return '';
+  return '<h2>Ações abertas em outros aparelhos</h2><div class="list">'+fora.map(function(r){return '<button class="item" data-act="entrarAcao" data-id="'+esc(r.id)+'"><span class="g"><b>'+esc(r.nome)+'</b><small class="num">'+esc([r.loja||(r.bcps?'BCPS '+r.bcps:''),dataBR(r.data)].filter(Boolean).join(', '))+'</small></span><span class="v">Entrar</span></button>';}).join('')+'</div><p class="note">Para somar as vendas com outro aparelho, entre na ação que ele abriu em vez de criar uma nova.</p>';
+}
+function verRemoto(id){
+  var c=null;remotos(acao()).forEach(function(x){if(x.id===id)c=x;});if(!c)return;
+  openSheet('<h3>Cupom '+pad(c.num)+'</h3><p class="note" style="margin:0 0 10px">'+esc(c.devNome)+', '+hora(c.criadoEm)+' <span class="tag '+c.status+'">'+c.status+'</span>'+(c.pagamento?' <span class="tag pag">'+esc(c.pagamento)+'</span>':'')+'</p><div class="list">'+
+    c.itens.map(function(i){return '<div class="item">'+thumb(i.codigo)+'<span class="g"><b>'+esc(i.descricao||('Produto '+i.codigo))+'</b><small class="num">'+esc(i.codigo)+(i.desconto?' <span class="tag">'+esc(i.desconto)+'</span>':'')+'</small></span><span class="v num">'+brl(i.qtd*i.preco)+'<small>'+i.qtd+' × '+brl(i.preco)+'</small></span></div>';}).join('')+
+    '</div><div class="rtotal"><span>'+unidades(c)+' itens</span><b class="num">'+brl(totalCupom(c))+'</b></div><div class="actions"><button class="btn primary block" data-act="fechar">Fechar</button></div>');
+}
+
 /* ---------- cabeçalho e navegação ---------- */
 function view(){var h=location.hash.slice(1);return VIEWS.indexOf(h)>=0?h:'venda';}
 function saudacao(a){var h=new Date().getHours(),s=h<12?'Bom dia':(h<18?'Boa tarde':'Boa noite');var n=a&&a.gerente?String(a.gerente).trim().split(/\s+/)[0]:'';return n?s+', '+n:s;}
@@ -295,13 +399,13 @@ function render(){
   $('#hTitle').textContent=a?a.nome:'Venda Externa';
   $('#hSub').textContent=a?[a.loja||('BCPS '+a.bcps),a.praca,dataBR(a.data)].filter(Boolean).join(', '):'Nenhuma ação aberta';
   ({venda:renderVenda,cupons:renderCupons,painel:renderPainel,acao:renderAcao})[v]();
-  renderDock(v,a);
+  renderDock(v,a);assinar(a);pintaSync();
 }
 window.addEventListener('hashchange',function(){window.scrollTo(0,0);render();});
 
 function semAcao(){
   return '<div class="card welcome"><svg viewBox="0 0 150 120" fill="none" aria-hidden="true"><circle cx="75" cy="62" r="52" fill="#87E6BC" opacity=".35"/><path d="M44 46h62l-6 58H50z" fill="#14315E"/><path d="M60 46V36a15 15 0 0 1 30 0v10" stroke="#2FD68B" stroke-width="5" stroke-linecap="round"/><path d="M60 64v24M66 64v24M74 64v24M79 64v24M86 64v24M91 64v24" stroke="#fff" stroke-width="3" stroke-linecap="round"/><path d="M118 22l3 8 8 3-8 3-3 8-3-8-8-3 8-3zM26 30l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#2151FF"/><circle cx="124" cy="78" r="4" fill="#01A9F4"/></svg>'+
-    '<b>Vamos abrir a ação de hoje</b><p class="note">Informe o nome da ação, a empresa, o BCPS e a data. Depois é só ler os códigos e finalizar os cupons.</p><div class="actions"><button class="btn go block" data-act="novaAcao">Criar ação</button></div></div>';
+    '<b>Vamos abrir a ação de hoje</b><p class="note">Informe o nome da ação, a empresa, o BCPS e a data. Depois é só ler os códigos e finalizar os cupons.</p><div class="actions"><button class="btn go block" data-act="novaAcao">Criar ação</button></div></div>'+listaFora();
 }
 
 /* ---------- venda ---------- */
@@ -446,11 +550,12 @@ function confete(){
 
 /* ---------- números da ação ---------- */
 function calc(a){
-  var r={fin:0,abertos:0,total:0,un:0,maior:0,desc:{},pag:{},prod:{},hora:{}};
-  a.cupons.forEach(function(c){
+  var r={fin:0,abertos:0,total:0,un:0,maior:0,desc:{},pag:{},prod:{},hora:{},dev:{}};
+  a.cupons.concat(remotos(a)).forEach(function(c){
     if(c.status==='aberto')r.abertos++;
     if(c.status!=='finalizado')return;
     r.fin++;var tc=totalCupom(c);r.total+=tc;if(tc>r.maior)r.maior=tc;
+    var dn=c.remoto?c.devNome:S.dev.nome;r.dev[dn]=r.dev[dn]||{v:0,q:0};r.dev[dn].v+=tc;r.dev[dn].q++;
     var pg=c.pagamento||'Não informado';r.pag[pg]=r.pag[pg]||{v:0,q:0};r.pag[pg].v+=tc;r.pag[pg].q++;
     var h=new Date(c.finalizadoEm||c.criadoEm).getHours();r.hora[h]=(r.hora[h]||0)+tc;
     c.itens.forEach(function(i){
@@ -466,27 +571,62 @@ function calc(a){
 }
 
 /* ---------- cupons ---------- */
+function linhaCupom(c,act){
+  return '<button class="item" data-act="'+act+'" data-id="'+esc(c.id)+'"><span class="g"><b>Cupom '+pad(c.num)+'</b><small class="num">'+hora(c.criadoEm)+', '+unidades(c)+' itens '+(c.status!=='finalizado'?'<span class="tag '+c.status+'">'+c.status+'</span>':'')+(c.pagamento?' <span class="tag pag">'+esc(c.pagamento)+'</span>':'')+(c.remoto?' <span class="tag dev">'+esc(c.devNome)+'</span>':'')+'</small></span><span class="v num">'+brl(totalCupom(c))+'</span></button>';
+}
 function renderCupons(){
   var a=acao(),el=$('#v-cupons');
   if(!a){el.innerHTML=semAcao();return;}
-  var h='<div class="actions" style="margin-top:0"><button class="btn primary block" data-act="exportar"'+(a.cupons.length?'':' disabled')+'>Exportar cupons (CSV)</button><button class="btn block" data-act="resumo"'+(a.cupons.length?'':' disabled')+'>Resumo da ação para enviar</button></div>';
-  if(!a.cupons.length)h+='<p class="note">Nenhum cupom nesta ação. Eles aparecem aqui assim que o primeiro item é lançado.</p>';
-  else{
-    h+='<h2>'+a.cupons.length+(a.cupons.length===1?' cupom':' cupons')+' nesta ação</h2><div class="list">';
-    a.cupons.slice().reverse().forEach(function(c){
-      h+='<button class="item" data-act="abrirCupom" data-id="'+c.id+'"><span class="g"><b>Cupom '+pad(c.num)+'</b><small class="num">'+hora(c.criadoEm)+', '+unidades(c)+' itens '+(c.status!=='finalizado'?'<span class="tag '+c.status+'">'+c.status+'</span>':'')+(c.pagamento?' <span class="tag pag">'+esc(c.pagamento)+'</span>':'')+'</small></span><span class="v num">'+brl(totalCupom(c))+'</span></button>';
-    });
-    h+='</div><p class="note">Toque em um cupom para acrescentar ou retirar itens.</p>';
-  }
+  var rem=remotos(a).slice().sort(function(x,y){return y.criadoEm-x.criadoEm;}),tem=a.cupons.length||rem.length;
+  var h='<div class="actions" style="margin-top:0"><button class="btn primary block" data-act="exportar"'+(tem?'':' disabled')+'>Exportar cupons (CSV)</button><button class="btn block" data-act="resumo"'+(tem?'':' disabled')+'>Resumo da ação para enviar</button><button class="btn block" data-act="impVendas">Importar vendas de outro aparelho</button></div><p class="note sync" hidden></p>';
+  if(!a.cupons.length)h+='<p class="note">Nenhum cupom lançado neste aparelho. Eles aparecem aqui assim que o primeiro item é lançado.</p>';
+  else h+='<h2>'+a.cupons.length+(a.cupons.length===1?' cupom':' cupons')+' deste aparelho</h2><div class="list">'+a.cupons.slice().reverse().map(function(c){return linhaCupom(c,'abrirCupom');}).join('')+'</div><p class="note">Toque em um cupom para acrescentar ou retirar itens.</p>';
+  if(rem.length)h+='<h2>'+rem.length+(rem.length===1?' cupom':' cupons')+' de outros aparelhos</h2><div class="list">'+rem.map(function(c){return linhaCupom(c,'verRemoto');}).join('')+'</div><p class="note">Cupons de outro aparelho só podem ser alterados no aparelho que os lançou.</p>';
   el.innerHTML=h;
+}
+/* ---------- vendas de outro aparelho, por arquivo ---------- */
+function importarVendas(rows){
+  var a=acao();if(!a)return;
+  var head=rows[0].map(norm),ix={};
+  ['acao','aparelho','cupom','status','hora','pagamento','cpf_cliente','telefone_cliente','sku','nome','quantidade','valor_unitario','desconto','id_aparelho','registro'].forEach(function(k){ix[k]=head.indexOf(k);});
+  if(ix.cupom<0||ix.sku<0||ix.quantidade<0||ix.valor_unitario<0){toast('Este não é um arquivo de cupons exportado pelo app.');return;}
+  var grupos={},nomeAcao='',n=0;
+  rows.slice(1).forEach(function(r){
+    var devNome=cel(r,ix.aparelho)||'Outro aparelho',dev=cel(r,ix.id_aparelho)||('n_'+norm(devNome).replace(/[^a-z0-9]+/g,'_'));
+    if(dev===S.dev.id)return;
+    var num=parseInt(cel(r,ix.cupom),10)||0,q=parseInt(cel(r,ix.quantidade),10)||0,p=parsePreco(r[ix.valor_unitario]);
+    if(!q||isNaN(p))return;
+    nomeAcao=nomeAcao||cel(r,ix.acao);
+    var g=grupos[dev]=grupos[dev]||{nome:devNome,cupons:{}},c=g.cupons[num];
+    if(!c){
+      var ts=+cel(r,ix.registro)||0;
+      if(!ts){var hm=/^(\d{1,2}):(\d{2})/.exec(cel(r,ix.hora));ts=new Date((a.data||hoje())+'T'+(hm?('0'+hm[1]).slice(-2)+':'+hm[2]:'12:00')+':00').getTime()||Date.now();}
+      var st=cel(r,ix.status);
+      c=g.cupons[num]={id:'imp_'+dev+'_'+num,remoto:true,dev:dev,devNome:devNome.slice(0,40),num:num,status:['aberto','finalizado','cancelado'].indexOf(st)>=0?st:'finalizado',criadoEm:ts,finalizadoEm:ts,pagamento:cel(r,ix.pagamento),cpf:cel(r,ix.cpf_cliente),tel:cel(r,ix.telefone_cliente),itens:[]};n++;
+    }
+    c.itens.push({id:c.id+'-'+c.itens.length,codigo:cel(r,ix.sku),descricao:cel(r,ix.nome),preco:Math.round(p*100)/100,qtd:q,desconto:cel(r,ix.desconto)});
+  });
+  var devs=Object.keys(grupos);
+  if(!devs.length){toast('O arquivo só tem vendas deste aparelho ou está vazio.');return;}
+  function aplicar(){
+    a.imp=a.imp||{};
+    devs.forEach(function(d){var g=grupos[d];a.imp[d]={nome:g.nome,em:Date.now(),cupons:Object.keys(g.cupons).map(function(k){return g.cupons[k];})};});
+    save();render();toast(n+(n===1?' cupom importado de ':' cupons importados de ')+devs.map(function(d){return grupos[d].nome;}).join(', ')+'.');
+  }
+  if(nomeAcao&&norm(nomeAcao)!==norm(a.nome))confirmar('Arquivo de outra ação','O arquivo é da ação “'+nomeAcao+'” e a ação aberta aqui é “'+a.nome+'”. Importar mesmo assim?','Importar mesmo assim',aplicar);
+  else aplicar();
+}
+function listaImp(a){
+  var k=a.imp?Object.keys(a.imp):[];
+  return k.map(function(d){var g=a.imp[d];return '<div class="inline" style="align-items:center;justify-content:space-between"><span class="note" style="margin:0">'+esc(g.nome)+': '+g.cupons.length+(g.cupons.length===1?' cupom':' cupons')+', arquivo das '+hora(g.em)+'</span><button class="btn small danger" data-act="remImp" data-id="'+esc(d)+'">Remover</button></div>';}).join('');
 }
 function csvCell(v){v=String(v==null?'':v);return /[";\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
 function dec(n){return n.toFixed(2).replace('.',',');}
 function exportar(){
   var a=acao();if(!a)return;
-  var L=[['acao','empresa','bcps','loja','praca','gerente','data_acao','cupom','status','hora','pagamento','cpf_cliente','telefone_cliente','sku','nome','quantidade','valor_unitario','desconto','total_item']];
-  a.cupons.forEach(function(c){c.itens.forEach(function(i){
-    L.push([a.nome,a.empresa,a.bcps,a.loja,a.praca,a.gerente,dataBR(a.data),pad(c.num),c.status,hora(c.criadoEm),c.pagamento||'',c.cpf||'',c.tel||'',i.codigo,i.descricao,i.qtd,dec(i.preco),i.desconto,dec(i.qtd*i.preco)]);
+  var L=[['acao','empresa','bcps','loja','praca','gerente','data_acao','aparelho','cupom','status','hora','pagamento','cpf_cliente','telefone_cliente','sku','nome','quantidade','valor_unitario','desconto','total_item','id_aparelho','registro']];
+  a.cupons.concat(remotos(a)).forEach(function(c){c.itens.forEach(function(i){
+    L.push([a.nome,a.empresa,a.bcps,a.loja,a.praca,a.gerente,dataBR(a.data),c.remoto?c.devNome:S.dev.nome,pad(c.num),c.status,hora(c.criadoEm),c.pagamento||'',c.cpf||'',c.tel||'',i.codigo,i.descricao,i.qtd,dec(i.preco),i.desconto,dec(i.qtd*i.preco),c.remoto?c.dev:S.dev.id,c.finalizadoEm||c.criadoEm||'']);
   });});
   baixar(('vendas_'+a.nome+'_'+a.data).replace(/[^\w\-]+/g,'_')+'.csv','\uFEFF'+L.map(function(r){return r.map(csvCell).join(';');}).join('\r\n'));
 }
@@ -516,6 +656,7 @@ function textoResumo(a){
   if(pg.length){L.push('');L.push('Pagamentos:');pg.forEach(function(k){L.push('- '+k+': '+brl(r.pag[k].v));});}
   var ds=DESCONTOS.filter(function(k){return r.desc[k];});
   if(ds.length){L.push('');L.push('Descontos:');ds.forEach(function(k){L.push('- '+k+': '+r.desc[k].q+' itens, '+brl(r.desc[k].v));});}
+  var dk=Object.keys(r.dev);if(dk.length>1){L.push('');L.push('Por aparelho:');dk.forEach(function(k){L.push('- '+k+': '+brl(r.dev[k].v)+' ('+r.dev[k].q+' cupons)');});}
   if(r.top.length){L.push('');L.push('Mais vendidos:');r.top.slice(0,5).forEach(function(k,i){L.push((i+1)+'. '+r.prod[k].n+' ('+r.prod[k].q+' un.)');});}
   if(r.abertos){L.push('');L.push('Obs.: '+r.abertos+' cupom(ns) ainda em aberto, fora destes números.');}
   return L.join('\n');
@@ -557,6 +698,7 @@ function renderPainel(){
   h+='<h2>Vendas por desconto</h2><div class="card">'+barras(r.desc,['Sem desconto'].concat(DESCONTOS),'',' un.')+'</div>';
   var pk=PAGAMENTOS.concat(['Não informado']).filter(function(k){return r.pag[k];});
   if(pk.length>1||pk[0]!=='Não informado')h+='<h2>Formas de pagamento</h2><div class="card">'+barras(r.pag,pk,'v',' cup.')+'</div>';
+  var dk=Object.keys(r.dev);if(dk.length>1)h+='<h2>Vendas por aparelho</h2><div class="card">'+barras(r.dev,dk,'',' cup.')+'</div>';
   h+='<h2>Produtos mais vendidos</h2><div class="list">';
   r.top.slice(0,5).forEach(function(k){var o=r.prod[k];h+='<div class="item">'+thumb(k)+'<span class="g"><b>'+esc(o.n)+'</b><small class="num">'+esc(k)+'</small></span><span class="v num">'+o.q+' un.<small>'+brl(o.v)+'</small></span></div>';});
   h+='</div><div class="actions"><button class="btn block" data-act="resumo">Resumo da ação para enviar</button></div>';
@@ -577,6 +719,8 @@ function renderAcao(){
     outras.slice().reverse().forEach(function(x){h+='<button class="item" data-act="trocarAcao" data-id="'+x.id+'"><span class="g"><b>'+esc(x.nome)+'</b><small class="num">'+dataBR(x.data)+', '+x.cupons.length+' cupons</small></span><span class="v">Abrir</span></button>';});
     h+='</div>';
   }
+  h+=listaFora();
+  h+='<h2>Vários aparelhos na mesma ação</h2><div class="card"><p class="note sync" style="margin:0" hidden></p><label for="devNome">Nome deste aparelho</label><input type="text" id="devNome" autocomplete="off" maxlength="30" value="'+esc(S.dev.nome)+'"><div class="inline"><button class="btn primary small" data-act="salvarDev">Salvar nome</button>'+(TEM_NUVEM?'<button class="btn small" data-act="syncAgora">Sincronizar agora</button>':'')+'</div><p class="note">Para juntar as vendas de dois aparelhos: no outro aparelho, abra Cupons, toque em Exportar cupons (CSV) e envie o arquivo para este. Aqui, toque em Importar vendas de outro aparelho e escolha o arquivo.</p>'+(a?'<div class="inline"><button class="btn small" data-act="impVendas">Importar vendas de outro aparelho</button></div>'+listaImp(a):'')+'</div>';
   var np=Object.keys(T.produtos).length,nf=Object.keys(T.produtos).filter(function(k){return T.produtos[k].f;}).length,nl=Object.keys(T.lojas).length;
   h+='<h2>Planilha de produtos</h2><div class="card"><b class="num">'+np+' produtos'+(nf?', '+nf+' com foto':'')+'</b><p class="note">Colunas, nesta ordem: SKU, foto, preço, nome. Aceita Excel (.xlsx) ou CSV. A foto é o link da imagem.</p><div class="inline"><button class="btn primary small" data-act="impProdutos">Importar planilha</button><button class="btn small" data-act="modeloProdutos">Baixar modelo</button>'+(APP_INSTALAVEL&&nf?'<button class="btn small" data-act="baixarFotos">Guardar fotos no aparelho</button>':'')+'</div></div>';
   h+='<h2>Planilha de lojas</h2><div class="card"><b class="num">'+nl+' lojas</b><p class="note">Colunas, nesta ordem: BCPS, nome da loja, praça, gerente. Com ela, o BCPS preenche o resto da ação sozinho.</p><div class="inline"><button class="btn primary small" data-act="impLojas">Importar planilha</button><button class="btn small" data-act="modeloLojas">Baixar modelo</button></div></div>';
@@ -689,6 +833,7 @@ function importarLojas(rows){
 }
 $('#fileProdutos').addEventListener('change',function(e){var f=e.target.files[0];if(f)lerPlanilha(f,importarProdutos);e.target.value='';});
 $('#fileLojas').addEventListener('change',function(e){var f=e.target.files[0];if(f)lerPlanilha(f,importarLojas);e.target.value='';});
+$('#fileVendas').addEventListener('change',function(e){var f=e.target.files[0];if(f)lerPlanilha(f,importarVendas);e.target.value='';});
 $('#fileLogo').addEventListener('change',function(e){
   var f=e.target.files[0];e.target.value='';if(!f)return;
   var r=new FileReader();
@@ -802,6 +947,12 @@ var A={
   abrirCupom:function(el){S.cupomId=el.dataset.id;save();location.hash='venda';},
   cliente:abrirCliente,
   salvarCliente:function(){var c=cupom();if(c&&lerCliente(c)){save();closeSheet();render();toast('Cliente salvo.');}},
+  entrarAcao:function(el){var r=null;REM_ACOES.forEach(function(x){if(x.id===el.dataset.id)r=x;});if(!r)return;var a={id:r.id,seq:1,cupons:[]},d=pA(r);for(var k in d)a[k]=d[k];a.sy=hash(JSON.stringify(d));S.acoes.push(a);S.acaoId=a.id;S.cupomId=null;save();toast('Você entrou na ação '+r.nome+'.');if(view()!=='venda')location.hash='venda';else render();},
+  salvarDev:function(){var n=$('#devNome').value.trim();if(!n){toast('Informe um nome para o aparelho.');return;}S.dev.nome=n.slice(0,30);save();render();toast('Nome do aparelho salvo.');},
+  syncAgora:function(){if(!DB){toast('Sincronização indisponível agora.');return;}sincronizar();pintaSync();toast(navigator.onLine===false?'Sem internet no momento.':'Sincronizando…');},
+  verRemoto:function(el){verRemoto(el.dataset.id);},
+  impVendas:function(){if(!acao()){toast('Abra a ação antes de importar.');return;}$('#fileVendas').click();},
+  remImp:function(el){var a=acao();if(a&&a.imp){delete a.imp[el.dataset.id];save();render();toast('Vendas importadas removidas.');}},
   exportar:exportar,
   resumo:abrirResumo,
   copiarResumo:copiarResumo,
@@ -824,6 +975,7 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&e.target.id==='busca'){var v=e.target.value.trim();if(!v)return;var pr=document.querySelector('#res [data-act="pick"]');if(/^\d+$/.test(v)||!pr)abrirItem(v);else abrirItem(pr.dataset.k);}
 });
 render();
+iniciarSync();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(function(){});
 })();

@@ -32,9 +32,17 @@ Antes de sair para a ação (com internet)
   3. Toque em "Guardar fotos no aparelho" para as fotos aparecerem sem internet.
   4. Em "Logo da marca", envie o arquivo oficial da logo.
 
+Juntar as vendas de dois ou mais aparelhos (sem servidor)
+  1. No outro aparelho: aba Cupons > Exportar cupons (CSV). Envie o arquivo
+     para o aparelho principal (WhatsApp, e-mail, Bluetooth).
+  2. No aparelho principal: aba Cupons > Importar vendas de outro aparelho
+     e escolha o arquivo recebido.
+  As vendas importadas entram no Painel, no resumo e no CSV. Importar de novo
+  o arquivo do mesmo aparelho substitui a importação anterior, sem duplicar.
+
 Importante
   - Os cupons ficam salvos só no aparelho onde foram lançados. Exporte o CSV
     ao final de cada ação.
   - Não limpe os dados do navegador nem desinstale o app antes de exportar.
   - Para atualizar o app: troque os arquivos na hospedagem e mude o número
-    da versão na segunda linha do sw.js (v5 para v6).
+    da versão na segunda linha do sw.js (v6 para v7).
